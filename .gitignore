@@ -1,1 +1,7 @@
 /myenv/*
+# GeoServer / QGIS generated spatial indices and locks
+*.qix
+*.lock
+data/raw/
+__pycache__/
+venv/

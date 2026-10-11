@@ -1,0 +1,258 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>ISRO MOSDAC SCORPIO - Cyclone Tracks WFS Viewer</title>
+
+  <!-- Leaflet CSS & JS -->
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+
+  <style>
+    * { box-sizing: border-box; }
+    body, html { margin: 0; padding: 0; height: 100%; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
+    #map { height: 100vh; width: 100vw; }
+
+    /* Floating Control Panel */
+    .dashboard-panel {
+      position: absolute;
+      top: 15px;
+      right: 15px;
+      z-index: 1000;
+      background: rgba(255, 255, 255, 0.95);
+      backdrop-filter: blur(4px);
+      padding: 16px 20px;
+      border-radius: 8px;
+      box-shadow: 0 4px 14px rgba(0,0,0,0.2);
+      width: 310px;
+    }
+
+    .dashboard-panel h3 {
+      margin: 0 0 6px 0;
+      font-size: 15px;
+      font-weight: 700;
+      color: #1a202c;
+    }
+
+    .dashboard-panel p {
+      margin: 0 0 12px 0;
+      font-size: 12px;
+      color: #718096;
+    }
+
+    .form-group {
+      margin-bottom: 12px;
+    }
+
+    label {
+      display: block;
+      font-size: 12px;
+      font-weight: 600;
+      color: #4a5568;
+      margin-bottom: 4px;
+    }
+
+    select {
+      width: 100%;
+      padding: 8px 10px;
+      border: 1px solid #cbd5e0;
+      border-radius: 6px;
+      font-size: 13px;
+      background-color: #fff;
+      outline: none;
+      cursor: pointer;
+    }
+
+    select:focus {
+      border-color: #3182ce;
+    }
+
+    .stats {
+      font-size: 12px;
+      color: #2d3748;
+      background: #edf2f7;
+      padding: 8px 12px;
+      border-radius: 6px;
+      margin-top: 10px;
+    }
+
+    .legend {
+      position: absolute;
+      bottom: 25px;
+      left: 15px;
+      z-index: 1000;
+      background: rgba(255, 255, 255, 0.92);
+      padding: 10px 14px;
+      border-radius: 6px;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.2);
+      font-size: 11px;
+      line-height: 18px;
+      color: #2d3748;
+    }
+    .legend-item { display: flex; align-items: center; gap: 8px; }
+    .legend-dot { width: 10px; height: 10px; border-radius: 50%; display: inline-block; }
+  </style>
+</head>
+<body>
+
+  <div class="dashboard-panel">
+    <h3>MOSDAC Cyclone WFS Client</h3>
+    <p>Consuming GeoServer OGC WFS 2.0.0 via CQL Filter</p>
+
+    <div class="form-group">
+      <label for="cycloneFilter">Select Cyclone Track:</label>
+      <select id="cycloneFilter" onchange="onFilterChange(this.value)">
+        <option value="ALL">Show All Cyclones</option>
+        <option value="SHAKHTI" selected>SHAKHTI (2025)</option>
+        <option value="MONTHA">MONTHA (2025)</option>
+        <option value="DANA">DANA (2024)</option>
+        <option value="REMAL">REMAL (2024)</option>
+        <option value="BIPARJOY">BIPARJOY (2023)</option>
+        <option value="MOCHA">MOCHA (2023)</option>
+        <option value="ASANI">ASANI (2022)</option>
+        <option value="TAUKTAE">TAUKTAE (2021)</option>
+        <option value="YAAS">YAAS (2021)</option>
+        <option value="AMPHAN">AMPHAN (2020)</option>
+        <option value="FANI">FANI (2019)</option>
+        <option value="HUDHUD">HUDHUD (2014)</option>
+        <option value="PHAILIN">PHAILIN (2013)</option>
+      </select>
+    </div>
+
+    <div class="stats" id="statusBox">Connecting to GeoServer WFS...</div>
+  </div>
+
+  <div class="legend">
+    <div style="font-weight: bold; margin-bottom: 4px;">Intensity Scale (knots)</div>
+    <div class="legend-item"><span class="legend-dot" style="background:#e53e3e;"></span> &gt; 64 kt (Severe/Very Severe)</div>
+    <div class="legend-item"><span class="legend-dot" style="background:#dd6b20;"></span> 48 - 63 kt (Cyclonic Storm)</div>
+    <div class="legend-item"><span class="legend-dot" style="background:#3182ce;"></span> &lt; 47 kt (Depression)</div>
+  </div>
+
+  <div id="map"></div>
+
+  <script>
+    // 1. Initialize Map centered over North Indian Ocean
+    const map = L.map('map').setView([18.5, 78.0], 5);
+
+    // 2. OpenStreetMap Basemap Layer
+    L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
+      maxZoom: 18,
+      attribution: '&copy; OpenStreetMap contributors | ISRO MOSDAC SCORPIO'
+    }).addTo(map);
+
+    let vectorLayerGroup = L.layerGroup().addTo(map);
+
+    // 3. Helper: Marker Color by Cyclone Intensity
+    function getIntensityColor(intensity) {
+      if (!intensity) return '#3182ce';
+      const val = parseFloat(intensity);
+      if (val >= 64) return '#e53e3e'; // Severe / Extreme
+      if (val >= 48) return '#dd6b20'; // Cyclonic Storm
+      return '#3182ce';               // Depression
+    }
+
+    // 4. Query GeoServer WFS Endpoint
+    function queryWFS(cycloneName) {
+      const statusBox = document.getElementById('statusBox');
+      statusBox.innerText = `Fetching features from WFS...`;
+
+      // Base OGC WFS 2.0.0 GetFeature endpoint
+      let wfsUrl = 'http://localhost:8080/geoserver/mosdac/ows?' +
+                   'service=WFS&' +
+                   'version=2.0.0&' +
+                   'request=GetFeature&' +
+                   'typeNames=mosdac:mosdac_cyclones&' +
+                   'outputFormat=application/json';
+
+      // Append CQL Filter when filtering by storm identifier
+      if (cycloneName && cycloneName !== 'ALL') {
+        wfsUrl += `&cql_filter=${encodeURIComponent(`cyclone_na='${cycloneName}'`)}`;
+      }
+
+      fetch(wfsUrl)
+        .then(response => {
+          if (!response.ok) throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+          return response.json();
+        })
+        .then(geojson => {
+          vectorLayerGroup.clearLayers();
+
+          const totalPoints = geojson.features ? geojson.features.length : 0;
+          statusBox.innerText = `Loaded: ${totalPoints} waypoints`;
+
+          if (totalPoints === 0) {
+            statusBox.innerText = `No records returned for '${cycloneName}'.`;
+            return;
+          }
+
+          // Sort features sequentially for track polyline connecting dots
+          const sortedFeatures = [...geojson.features].sort((a, b) => {
+            return (a.properties.point_seq || 0) - (b.properties.point_seq || 0);
+          });
+
+          // Draw Track Line if a single cyclone is selected
+          if (cycloneName !== 'ALL') {
+            const latlngs = sortedFeatures.map(f => [
+              f.geometry.coordinates[1],
+              f.geometry.coordinates[0]
+            ]);
+            const polyline = L.polyline(latlngs, {
+              color: '#4a5568',
+              weight: 2,
+              dashArray: '5, 8'
+            });
+            vectorLayerGroup.addLayer(polyline);
+          }
+
+          // Render Point Markers
+          const geoJsonLayer = L.geoJSON(geojson, {
+            pointToLayer: (feature, latlng) => {
+              const p = feature.properties;
+              return L.circleMarker(latlng, {
+                radius: 7,
+                fillColor: getIntensityColor(p.cyclone_in),
+                color: '#ffffff',
+                weight: 1.5,
+                opacity: 1,
+                fillOpacity: 0.9
+              });
+            },
+            onEachFeature: (feature, layer) => {
+              const p = feature.properties;
+              console.log(p)
+              const popupContent = `
+                <div style="font-size:13px; min-width:140px;">
+                  <strong style="font-size:14px; color:#1a202c;">Cyclone ${p.cyclone_na || 'N/A'}</strong><br>
+                  <hr style="margin:4px 0; border:0; border-top:1px solid #e2e8f0;">
+                  <b>Year:</b> ${p.year || 'N/A'}<br>
+                  <b>Sequence:</b> #${p.point_seq || '1'}<br>
+                  <b>Intensity:</b> ${p.cyclone_in ? p.cyclone_in + ' kt' : 'N/A'}<br>
+                  <b>Coordinates:</b> ${feature.geometry.coordinates[1].toFixed(2)}°N, ${feature.geometry.coordinates[0].toFixed(2)}°E
+                </div>
+              `;
+              layer.bindPopup(popupContent);
+            }
+          });
+
+          vectorLayerGroup.addLayer(geoJsonLayer);
+
+          // Fit view to the bounds of the returned track
+          map.fitBounds(geoJsonLayer.getBounds(), { padding: [40, 40], maxZoom: 8 });
+        })
+        .catch(err => {
+          console.error('WFS Fetch Error:', err);
+          statusBox.innerHTML = `<span style="color:#e53e3e;">Connection failed. Ensure GeoServer is running on port 8080.</span>`;
+        });
+    }
+
+    function onFilterChange(selectedCyclone) {
+      queryWFS(selectedCyclone);
+    }
+
+    // Default load: SHAKHTI (2025)
+    queryWFS('SHAKHTI');
+  </script>
+</body>
+</html>

@@ -1,0 +1,16 @@
+version: '3.8'
+
+services:
+  geoserver:
+    image: kartoza/geoserver:latest
+    container_name: geoserver_mosdac
+    environment:
+      - GEOSERVER_ADMIN_USER=admin
+      - GEOSERVER_ADMIN_PASSWORD=abcd1234
+      - INITIAL_MEMORY=1G
+      - MAXIMUM_MEMORY=2G
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./data:/opt/geoserver/data_dir/cyclone_data:z
+    restart: unless-stopped
